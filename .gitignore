@@ -1,0 +1,8 @@
+.DS_Store
+.moonagent/
+.mooncakes/
+/golem-temp
+_build/
+golem-temp/
+target
+target/

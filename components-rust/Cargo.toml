@@ -1,0 +1,24 @@
+[package]
+name = "components_rust"
+version = "0.0.1"
+edition = "2024"
+
+[profile.release]
+opt-level = "s"
+lto = false
+codegen-units = 1
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+log = { version = "0.4.29", features = ["kv"] }
+golem-rust = { version = "2.1.0", features = ["export_golem_agentic"] }
+typst = "0.14.2"
+typst-pdf = "0.14.2"
+typst-as-lib = "0.15.0"
+derive_typst_intoval = "0.6.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wstd = { version = "=0.6.5", features = ["default", "json"] }
