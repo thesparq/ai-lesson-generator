@@ -6,3 +6,5 @@ _build/
 golem-temp/
 target
 target/
+.env
+db/rocksdb/

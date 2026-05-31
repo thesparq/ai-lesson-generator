@@ -1,0 +1,240 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "ai-lesson-generator/components-moonbit"
+
+import {
+  "golemcloud/golem_sdk/config",
+  "golemcloud/golem_sdk/interface/golem/agent/common",
+  "golemcloud/golem_sdk/interface/golem/agent/host",
+  "golemcloud/golem_sdk/interface/golem/core/types",
+  "golemcloud/golem_sdk/interface/wasi/clocks/wallClock",
+  "golemcloud/golem_sdk/rpc",
+}
+
+// Values
+pub fn cabi_realloc(Int, Int, Int, Int) -> Int
+
+pub fn call_baml_generate_lesson(GenerateNigerianLessonRequest) -> Result[CompleteLessonContent, AgentError]
+
+pub fn convert_topic_to_request(TopicRecord) -> GenerateNigerianLessonRequest
+
+pub fn create_row(CompleteLessonContent, String, DbConfig) -> Result[String, AgentError]
+
+pub fn db_request(String, DbConfig) -> Result[String, AgentError]
+
+pub fn debug_fetch_topics(DbConfig) -> String
+
+pub fn fetch_lessons(String, String, DbConfig) -> Result[Array[CompleteLessonContent], AgentError]
+
+pub fn fetch_topic_by_id(String, DbConfig) -> Result[TopicRecord?, AgentError]
+
+pub fn fetch_topics(DbConfig) -> Result[Array[TopicRecord], AgentError]
+
+pub fn from_promise_id(@types.PromiseId) -> PromiseKey
+
+pub fn to_promise_id(PromiseKey) -> @types.PromiseId
+
+pub fn wasmExportDiscoverAgentTypes() -> Int
+
+pub fn wasmExportDiscoverAgentTypesPostReturn(Int) -> Unit
+
+pub fn wasmExportGetDefinition() -> Int
+
+pub fn wasmExportGetDefinitionPostReturn(Int) -> Unit
+
+pub fn wasmExportInitialize(Int) -> Int
+
+pub fn wasmExportInitializePostReturn(Int) -> Unit
+
+pub fn wasmExportInvoke(Int) -> Int
+
+pub fn wasmExportInvokePostReturn(Int) -> Unit
+
+pub fn wasmExportLoad(Int, Int, Int, Int) -> Int
+
+pub fn wasmExportLoadPostReturn(Int) -> Unit
+
+pub fn wasmExportSave() -> Int
+
+pub fn wasmExportSavePostReturn(Int) -> Unit
+
+// Errors
+
+// Types and methods
+pub(all) struct AgentError {
+  message : String
+  code : String
+}
+
+type ChildContentAgent
+pub fn ChildContentAgent::generate(Self, PromiseKey) -> Unit
+
+pub(all) struct ChildContentAgentClient {
+  client : @rpc.AgentClient
+}
+pub fn ChildContentAgentClient::drop(Self) -> Unit
+pub fn ChildContentAgentClient::generate(Self, PromiseKey) -> Unit raise @common.AgentError
+pub fn ChildContentAgentClient::get(String) -> Self raise @common.AgentError
+pub fn ChildContentAgentClient::get_agent_id(Self) -> String raise @common.AgentError
+pub fn ChildContentAgentClient::get_phantom(String, @types.Uuid) -> Self raise @common.AgentError
+pub fn ChildContentAgentClient::new_phantom(String) -> Self raise @common.AgentError
+pub fn ChildContentAgentClient::phantom_id(Self) -> @types.Uuid?
+pub fn ChildContentAgentClient::schedule_cancelable_generate(Self, @wallClock.Datetime, PromiseKey) -> @host.CancellationToken raise @common.AgentError
+pub fn ChildContentAgentClient::schedule_generate(Self, @wallClock.Datetime, PromiseKey) -> Unit raise @common.AgentError
+pub fn[T] ChildContentAgentClient::scoped(String, (Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn[T] ChildContentAgentClient::scoped_get_phantom(String, @types.Uuid, (Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn[T] ChildContentAgentClient::scoped_new_phantom(String, (Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn ChildContentAgentClient::trigger_generate(Self, PromiseKey) -> Unit raise @common.AgentError
+
+pub(all) enum ClassLevel {
+  Year1
+  Year2
+  Year3
+  Year4
+  Year5
+  Jss1
+  Jss2
+  Jss3
+}
+
+pub(all) struct CompleteLessonContent {
+  topic_title : String
+  subject : String
+  class_level : ClassLevel
+  age_range : String
+  term : Term
+  week : Int
+  duration_mins : Int
+  objectives : Array[LessonObjective]
+  introduction : String
+  content_sections : Array[ContentSection]
+  conclusion : String
+  key_points : Array[String]
+  mcq_questions : Array[McqQuestion]
+  theoretical_questions : Array[TheoreticalQuestion]
+  prior_knowledge : Array[String]
+  materials : Array[String]
+  lesson_steps : Array[LessonStep]
+  formative_assessment : String
+  summative_assessment : String
+  success_criteria : Array[String]
+  remediation : String
+  extension_activities : Array[String]
+  primary_sources : Array[String]
+  textbook_references : Array[String]
+  teacher_tips : String
+}
+
+pub(all) struct ContentSection {
+  section_number : Int?
+  header : String
+  body : String
+  sub_points : Array[ContentSubPoint]?
+}
+
+pub(all) struct ContentSubPoint {
+  sub_number : String
+  text : String
+}
+
+pub(all) struct DbConfig {
+  db_url : @config.Secret[String]
+  db_username : @config.Secret[String]
+  db_password : @config.Secret[String]
+  db_namespace : @config.Secret[String]
+  db_name : @config.Secret[String]
+}
+
+pub(all) struct GenerateNigerianLessonRequest {
+  age_group : String
+  class_level : ClassLevel
+  subject : String
+  term : Term
+  topic : String
+  week : Int
+  context : String?
+}
+
+pub(all) struct LessonObjective {
+  objective : String
+  taxonomy_level : String
+}
+
+pub(all) struct LessonStep {
+  step_number : Int
+  phase : String
+  duration_mins : Int
+  teacher_actions : String
+  pupil_activities : String
+  teaching_strategy : String
+  assessment : String?
+}
+
+type MasterContentAgent
+pub fn MasterContentAgent::generate_all(Self) -> Result[String, AgentError]
+
+pub(all) struct MasterContentAgentClient {
+  client : @rpc.AgentClient
+}
+pub fn MasterContentAgentClient::drop(Self) -> Unit
+pub fn MasterContentAgentClient::generate_all(Self) -> Result[String, AgentError] raise @common.AgentError
+pub fn MasterContentAgentClient::get() -> Self raise @common.AgentError
+pub fn MasterContentAgentClient::get_agent_id(Self) -> String raise @common.AgentError
+pub fn MasterContentAgentClient::get_phantom(@types.Uuid) -> Self raise @common.AgentError
+pub fn MasterContentAgentClient::new_phantom() -> Self raise @common.AgentError
+pub fn MasterContentAgentClient::phantom_id(Self) -> @types.Uuid?
+pub fn MasterContentAgentClient::schedule_cancelable_generate_all(Self, @wallClock.Datetime) -> @host.CancellationToken
+pub fn MasterContentAgentClient::schedule_generate_all(Self, @wallClock.Datetime) -> Unit
+pub fn[T] MasterContentAgentClient::scoped((Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn[T] MasterContentAgentClient::scoped_get_phantom(@types.Uuid, (Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn[T] MasterContentAgentClient::scoped_new_phantom((Self) -> T raise @common.AgentError) -> T raise @common.AgentError
+pub fn MasterContentAgentClient::trigger_generate_all(Self) -> Unit
+
+pub(all) struct McqQuestion {
+  question : String
+  option_a : String
+  option_b : String
+  option_c : String
+  correct_answer : String
+  explanation : String
+}
+
+pub(all) struct PdfFile {
+  content_type : String
+  data : Bytes
+}
+
+pub(all) struct PromiseKey {
+  component_id_high : UInt64
+  component_id_low : UInt64
+  agent_id : String
+  oplog_idx : UInt64
+}
+
+pub(all) enum Term {
+  First
+  Second
+  Third
+}
+
+pub(all) struct TheoreticalQuestion {
+  question : String
+  parts : Array[String]
+  model_answer : String
+  marking_scheme : String
+}
+
+pub(all) struct TopicRecord {
+  id : String?
+  agegroup : String
+  class : String
+  subject : String
+  term : String
+  topic : String
+  week : Int
+  context : String?
+}
+
+// Type aliases
+
+// Traits
+

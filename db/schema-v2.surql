@@ -6,38 +6,101 @@
 -- ============================================================
 
 ----------------
--- Step 1: Update lookup tables with new fields
--- (Tables were created by Unit 9 normalize-schema.surql)
+-- Step 0: Clear existing data (table schemas stay)
+-- Order matters: child records before referenced records.
 ----------------
 
--- Remove active from class_levels (value objects don't toggle)
-REMOVE FIELD active ON class_levels;
-DEFINE FIELD age_range ON class_levels TYPE option<string>;
+DELETE lessons;
+DELETE has_subject;
+DELETE class_levels;
+DELETE subjects;
+DELETE terms;
 
--- Remove active from subjects (value objects don't toggle)
-REMOVE FIELD active ON subjects;
+----------------
+-- Step 1a: Populate subjects (idempotent)
+----------------
+
+LET $subjects = array::distinct((SELECT VALUE subject FROM lesson_content));
+FOR $s IN $subjects {
+    LET $slug = string::lowercase(string::replace($s, ' ', '_'));
+    LET $id = type::thing("subjects", $slug);
+    CREATE $id CONTENT { name: $s, code: $slug, active: true };
+};
+
+----------------
+-- Step 1b: Populate class_levels with formatted names
+-- PRIMARY_N → "Year N" (ID year_N)
+-- JSS_N → "JSS N" (ID stays jss_N)
+----------------
+
+LET $levels = array::distinct((SELECT VALUE class_level FROM lesson_content));
+FOR $l IN $levels {
+    LET $label = IF string::starts_with($l, 'PRIMARY_') THEN
+        "Year " + string::replace($l, 'PRIMARY_', '')
+    ELSE IF string::starts_with($l, 'JSS_') THEN
+        string::replace($l, '_', ' ')
+    ELSE
+        $l
+    END;
+    LET $slug = string::lowercase(string::replace($label, ' ', '_'));
+    LET $id = type::thing("class_levels", $slug);
+    LET $age = (SELECT VALUE age_range FROM lesson_content
+                WHERE class_level = $l AND age_range != NONE LIMIT 1)[0];
+    CREATE $id CONTENT {
+        name: $label,
+        code: $slug,
+        active: true,
+        age_range: $age
+    };
+};
+
+----------------
+-- Step 1c: Populate terms (idempotent)
+----------------
+
+LET $terms = array::distinct((SELECT VALUE term FROM lesson_content));
+FOR $t IN $terms {
+    LET $order = IF $t = 'First Term' THEN 1
+                 ELSE IF $t = 'Second Term' THEN 2
+                 ELSE IF $t = 'Third Term' THEN 3
+                 ELSE 0
+                 END;
+    LET $slug = string::lowercase(string::replace($t, ' ', '_'));
+    LET $id = type::thing("terms", $slug);
+    CREATE $id CONTENT { name: $t, sort_order: $order, active: true };
+};
+
+----------------
+-- Step 1d: Update lookup table schemas
+----------------
+
+DEFINE FIELD age_range ON class_levels TYPE option<string>;
+DEFINE INDEX idx_cl_name ON class_levels COLUMNS name UNIQUE;
 
 ----------------
 -- Step 2: Create has_subject graph edge (replaces class_subjects)
+-- Reads directly from lesson_content (not the class_subjects table)
 ----------------
 
+REMOVE TABLE has_subject;
 DEFINE TABLE has_subject TYPE RELATION FROM class_levels TO subjects;
 DEFINE FIELD active ON has_subject TYPE bool DEFAULT true;
 DEFINE INDEX idx_hs_unique ON has_subject COLUMNS in, out UNIQUE;
 DEFINE INDEX idx_hs_in ON has_subject COLUMNS in;
 
--- Migrate edges from old class_subjects (idempotent — skips existing pairs)
-LET $edges = SELECT * FROM class_subjects;
-FOR $e IN $edges {
-    LET $existing = (SELECT VALUE id FROM has_subject
-        WHERE in = $e.class_level_id AND out = $e.subject_id
-        LIMIT 1)[0];
-    IF $existing == NONE {
-        CREATE has_subject CONTENT {
-            in: $e.class_level_id,
-            out: $e.subject_id,
-            active: $e.active
-        };
+LET $pairs = array::distinct(SELECT class_level, subject FROM lesson_content);
+FOR $p IN $pairs {
+    LET $cl_label = IF string::starts_with($p.class_level, 'PRIMARY_') THEN
+        "Year " + string::replace($p.class_level, 'PRIMARY_', '')
+    ELSE IF string::starts_with($p.class_level, 'JSS_') THEN
+        string::replace($p.class_level, '_', ' ')
+    ELSE
+        $p.class_level
+    END;
+    LET $cl_id = (SELECT VALUE id FROM class_levels WHERE name = $cl_label LIMIT 1)[0];
+    LET $s_id = (SELECT VALUE id FROM subjects WHERE name = $p.subject LIMIT 1)[0];
+    IF $cl_id != NONE AND $s_id != NONE {
+        RELATE $cl_id -> has_subject -> $s_id CONTENT { active: true };
     };
 };
 
@@ -45,9 +108,10 @@ FOR $e IN $edges {
 -- Step 3: Create lessons table (replaces lesson_content)
 ----------------
 
+REMOVE TABLE lessons;
+
 DEFINE TABLE lessons SCHEMAFULL;
 
--- Navigation fields (strict typing with ASSERTS)
 DEFINE FIELD class_subject ON lessons TYPE record<has_subject> ASSERT $value != NONE;
 DEFINE FIELD term          ON lessons TYPE record<terms>        ASSERT $value != NONE;
 DEFINE FIELD week          ON lessons TYPE int                  ASSERT $value >= 1;
@@ -55,20 +119,19 @@ DEFINE FIELD topic_title   ON lessons TYPE string               ASSERT $value !=
 DEFINE FIELD active        ON lessons TYPE bool DEFAULT true;
 DEFINE FIELD duration_mins ON lessons TYPE int;
 
--- Content arrays (loose — app-layer validation)
-DEFINE FIELD objectives           ON lessons TYPE array;
-DEFINE FIELD content_sections     ON lessons TYPE array;
-DEFINE FIELD key_points           ON lessons TYPE array;
-DEFINE FIELD lesson_steps         ON lessons TYPE array;
-DEFINE FIELD mcq_questions        ON lessons TYPE array;
-DEFINE FIELD theoretical_questions ON lessons TYPE array;
-DEFINE FIELD materials            ON lessons TYPE array;
-DEFINE FIELD prior_knowledge      ON lessons TYPE array;
-DEFINE FIELD success_criteria     ON lessons TYPE array;
-DEFINE FIELD extension_activities ON lessons TYPE array;
-DEFINE FIELD textbook_references  ON lessons TYPE array;
+DEFINE FIELD objectives           ON lessons FLEXIBLE TYPE array<object>;
+DEFINE FIELD content_sections     ON lessons FLEXIBLE TYPE array<object>;
+DEFINE FIELD key_points           ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD lesson_steps         ON lessons FLEXIBLE TYPE array<object>;
+DEFINE FIELD mcq_questions        ON lessons FLEXIBLE TYPE array<object>;
+DEFINE FIELD theoretical_questions ON lessons FLEXIBLE TYPE array<object>;
+DEFINE FIELD materials            ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD prior_knowledge      ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD success_criteria     ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD extension_activities ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD textbook_references  ON lessons FLEXIBLE TYPE array;
+DEFINE FIELD primary_sources      ON lessons FLEXIBLE TYPE array;
 
--- String content fields
 DEFINE FIELD introduction          ON lessons TYPE string;
 DEFINE FIELD conclusion            ON lessons TYPE string;
 DEFINE FIELD formative_assessment  ON lessons TYPE string;
@@ -76,32 +139,45 @@ DEFINE FIELD summative_assessment  ON lessons TYPE string;
 DEFINE FIELD remediation           ON lessons TYPE string;
 DEFINE FIELD teacher_tips          ON lessons TYPE string;
 
--- Navigation indexes
 DEFINE INDEX idx_lessons_nav  ON lessons COLUMNS class_subject, term, week;
 DEFINE INDEX idx_lessons_term ON lessons COLUMNS class_subject, term;
 
 ----------------
--- Step 4: Migrate lesson_content → lessons (idempotent)
--- Skips if a lesson already exists for this class_subject + term + week.
----------------
+-- Diagnostic: check raw array field format in lesson_content
+----------------
+
+SELECT class_level, subject, term,
+       type::is::string(objectives) AS objectives_is_string,
+       type::is::array(objectives)  AS objectives_is_array,
+       type::is::string(content_sections) AS cs_is_string,
+       type::is::string(lesson_steps) AS ls_is_string,
+       type::is::string(mcq_questions) AS mcq_is_string,
+       type::is::string(key_points) AS kp_is_string,
+       objectives, content_sections
+FROM lesson_content
+LIMIT 3;
+
+----------------
+-- Step 4: Migrate lesson_content → lessons
+----------------
 
 LET $old = SELECT * FROM lesson_content;
 FOR $lc IN $old {
-    LET $hs = (SELECT VALUE id FROM has_subject
-        WHERE in = $lc.class_level_id AND out = $lc.subject_id
-        LIMIT 1)[0];
-
-    IF $hs != NONE AND $lc.term_id != NONE {
-        LET $existing = (SELECT VALUE id FROM lessons
-            WHERE class_subject = $hs
-              AND term = $lc.term_id
-              AND week = ($lc.week_number ?? 1)
-              AND topic_title = ($lc.topic_title ?? ($lc.subject ?? ""))
-            LIMIT 1)[0];
-        IF $existing == NONE {
-            CREATE lessons CONTENT {
+    LET $cl_label = IF string::starts_with($lc.class_level, 'PRIMARY_') THEN
+        "Year " + string::replace($lc.class_level, 'PRIMARY_', '')
+    ELSE IF string::starts_with($lc.class_level, 'JSS_') THEN
+        string::replace($lc.class_level, '_', ' ')
+    ELSE
+        $lc.class_level
+    END;
+    LET $cl_id = (SELECT VALUE id FROM class_levels WHERE name = $cl_label LIMIT 1)[0];
+    LET $sb_id = (SELECT VALUE id FROM subjects WHERE name = $lc.subject LIMIT 1)[0];
+    LET $hs = (SELECT VALUE id FROM has_subject WHERE in = $cl_id AND out = $sb_id LIMIT 1)[0];
+    LET $resolved_term = (SELECT VALUE id FROM terms WHERE name = $lc.term LIMIT 1)[0];
+    IF $hs != NONE AND $resolved_term != NONE {
+        CREATE lessons CONTENT {
             class_subject: $hs,
-            term: $lc.term_id,
+            term: $resolved_term,
             week: $lc.week_number ?? 1,
             topic_title: $lc.topic_title ?? ($lc.subject ?? ""),
             active: $lc.active ?? true,
@@ -119,34 +195,22 @@ FOR $lc IN $old {
             success_criteria: $lc.success_criteria ?? [],
             extension_activities: $lc.extension_activities ?? [],
             textbook_references: $lc.textbook_references ?? [],
+            primary_sources: $lc.primary_sources ?? [],
             formative_assessment: $lc.formative_assessment ?? "",
             summative_assessment: $lc.summative_assessment ?? "",
             remediation: $lc.remediation ?? "",
             teacher_tips: $lc.teacher_tips ?? ""
-            };
         };
     };
 };
 
 ----------------
--- Step 5: Migrate age_range to class_levels (idempotent)
-----------------
-
-UPDATE class_levels SET age_range = (
-    SELECT VALUE age_range FROM lesson_content
-    WHERE class_level = $parent.name AND age_range != NONE
-    LIMIT 1
-) WHERE age_range IS NONE;
-
-----------------
 -- Verification queries
 ----------------
 
--- 1. Check record counts
 SELECT count() FROM lessons GROUP ALL;
 SELECT count() FROM has_subject GROUP ALL;
 
--- 2. Spot check migrated lessons
 SELECT id, class_subject.in.name AS class_name,
        class_subject.out.name AS subject_name,
        term.name AS term_name,
@@ -155,12 +219,10 @@ SELECT id, class_subject.in.name AS class_name,
 FROM lessons
 LIMIT 10;
 
--- 3. Verify week values are reasonable
 SELECT math::min(week) AS min_week, math::max(week) AS max_week
 FROM lessons
 GROUP ALL;
 
--- 4. Verify has_subject edges cover all class-subject pairs in lessons
 LET $lesson_pairs = array::distinct(
     SELECT class_subject.in.id AS cl_id, class_subject.out.id AS sub_id
     FROM lessons
@@ -175,7 +237,6 @@ RETURN {
     all_covered: $lesson_pairs = $edge_pairs
 };
 
--- 5. Verify lesson_content is untouched
 SELECT count() FROM lesson_content GROUP ALL;
 SELECT id, class_level, subject, term, week
 FROM lesson_content

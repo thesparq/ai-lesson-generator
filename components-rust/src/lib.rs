@@ -1,13 +1,35 @@
 mod pdf_engine;
 
+use base64::engine::general_purpose;
+use base64::Engine;
+use golem_rust::agentic::{Config, Secret};
 use golem_rust::{
-    Schema, agent_definition, agent_implementation, agentic::UnstructuredBinary, endpoint,
+    ConfigSchema, Schema, agent_definition, agent_implementation, agentic::UnstructuredBinary,
+    endpoint,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wstd::http::{Body, Client, HeaderValue, Method, Request};
 
 use pdf_engine::pdf_engine;
+
+// ============================================================
+// SurrealDB Config (shared secrets)
+// ============================================================
+
+#[derive(ConfigSchema)]
+pub struct DbConfig {
+    #[config_schema(secret)]
+    pub db_url: Secret<String>,
+    #[config_schema(secret)]
+    pub db_username: Secret<String>,
+    #[config_schema(secret)]
+    pub db_password: Secret<String>,
+    #[config_schema(secret)]
+    pub db_namespace: Secret<String>,
+    #[config_schema(secret)]
+    pub db_name: Secret<String>,
+}
 
 // ============================================================
 // Data Types
@@ -40,9 +62,8 @@ impl From<String> for AgentError {
 
 #[agent_definition(ephemeral, mount = "/generate-pdf-api/{subject}/{class}/{mode}")]
 pub trait PdfAgent {
-    fn new(subject: String, class: String, mode: String) -> Self;
+    fn new(subject: String, class: String, mode: String, #[agent_config] config: Config<DbConfig>) -> Self;
     #[endpoint(get = "/")]
-    // async fn pdf_generator(&mut self) -> PdfFile;
     async fn pdf_generator(&mut self) -> UnstructuredBinary<String>;
 }
 
@@ -50,27 +71,26 @@ pub struct PdfImpl {
     subject: String,
     class: String,
     mode: String,
+    config: Config<DbConfig>,
 }
 
 #[agent_implementation]
 impl PdfAgent for PdfImpl {
-    fn new(subject: String, class: String, mode: String) -> Self {
+    fn new(subject: String, class: String, mode: String, #[agent_config] config: Config<DbConfig>) -> Self {
         Self {
             subject,
             class,
             mode,
+            config,
         }
     }
 
     async fn pdf_generator(&mut self) -> UnstructuredBinary<String> {
-        let records = match fetch_lessons(&self.subject, &self.class).await {
+        let config = self.config.get();
+        let records = match fetch_lessons(&self.subject, &self.class, &config).await {
             Ok(records) => records,
             Err(err) => {
                 println!("Error: {}", err.message);
-                // return PdfFile {
-                //     content_type: "text/plain".to_string(),
-                //     data: err.message.into_bytes(),
-                // };
                 return UnstructuredBinary::Inline {
                     data: err.message.into_bytes(),
                     mime_type: "text/plain".to_string(),
@@ -107,7 +127,7 @@ impl PdfAgent for PdfImpl {
 }
 
 // ============================================================
-// SurrealDB fetch_lessons (inlined, no BAML dependency)
+// SurrealDB fetch_lessons (graph traversal on lessons table)
 // ============================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -192,18 +212,39 @@ pub struct ObjectiveJson {
     pub taxonomy_level: String,
 }
 
+/// Fetch generated lessons from the `lessons` table using graph traversal
 pub async fn fetch_lessons(
     subject: &str,
     class: &str,
+    config: &DbConfig,
 ) -> Result<Vec<CompleteLessonContent>, AgentError> {
+    let qclass = class.replace('"', "\\\"");
+    let qsubject = subject.replace('"', "\\\"");
     let query = format!(
-        "USE NS main DB `johnethel-school-generated-lessons`; \
-         SELECT * FROM lesson_content \
-         WHERE \"{}\" in class_level AND \"{}\" in subject \
-         ORDER BY term ASC, week ASC;",
-        class, subject
+         "USE NS {} DB {}; \
+          SELECT topic_title, \
+                 class_subject.out.name AS subject, \
+                 class_subject.in.name AS class_level, \
+                 class_subject.in.age_range AS age_range, \
+                 term.name AS term, \
+                 week AS week, \
+                 duration_mins AS duration_mins, \
+                 introduction, conclusion, teacher_tips, \
+                 remediation, formative_assessment, summative_assessment, \
+                 objectives, content_sections, key_points, lesson_steps, \
+                 mcq_questions, theoretical_questions, \
+                 materials, prior_knowledge, success_criteria, \
+                 extension_activities, textbook_references, primary_sources \
+          FROM lessons \
+          WHERE class_subject.in.name = \"{}\" \
+            AND class_subject.out.name = \"{}\" \
+          ORDER BY term.name ASC, week ASC;",
+        config.db_namespace.get(),
+        config.db_name.get(),
+        qclass,
+        qsubject,
     );
-    let response = db_request(query).await?;
+    let response = db_request(query, config).await?;
 
     let records = if let Some(select_result) = response.get(1) {
         if let Some(status) = select_result.get("status") {
@@ -245,14 +286,22 @@ pub async fn fetch_lessons(
     Ok(records)
 }
 
-async fn db_request(query: String) -> Result<Vec<Value>, AgentError> {
-    let url =
-        std::env::var("SURREAL_DB_URL").unwrap_or_else(|_| "http://localhost:8000/sql".to_string());
+async fn db_request(query: String, config: &DbConfig) -> Result<Vec<Value>, AgentError> {
+    let url = config.db_url.get();
+    let username = config.db_username.get();
+    let password = config.db_password.get();
+    let ns = config.db_namespace.get();
+    let db_name_val = config.db_name.get();
+
     let url = if url.ends_with("/sql") {
         url
     } else {
         url + "/sql"
     };
+
+    let creds = format!("{}:{}", username, password);
+    let encoded = general_purpose::STANDARD.encode(creds.as_bytes());
+    let auth_value = format!("Basic {}", encoded);
 
     let request = Request::builder()
         .method(Method::POST)
@@ -263,10 +312,15 @@ async fn db_request(query: String) -> Result<Vec<Value>, AgentError> {
         )
         .header(
             "Authorization",
-            HeaderValue::from_str(
-                "Basic Z29sZW06ejVFZFpoRmFIWmNpMjl4d2F6NFp1VUVtbWlkZ0g5S0FLem0wa0hSYUpBPQ==",
-            )
-            .map_err(|e| e.to_string())?,
+            HeaderValue::from_str(&auth_value).map_err(|e| e.to_string())?,
+        )
+        .header(
+            "NS",
+            HeaderValue::from_str(&ns).map_err(|e| e.to_string())?,
+        )
+        .header(
+            "DB",
+            HeaderValue::from_str(&db_name_val).map_err(|e| e.to_string())?,
         )
         .body::<Body>(query.into())
         .map_err(|e| AgentError {

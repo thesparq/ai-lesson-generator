@@ -19,7 +19,9 @@ import {
   "golemcloud/golem_sdk/api" @api,
   "golemcloud/golem_sdk/interface/golem/durability/durability" @durability,
   "moonbitlang/core/encoding/utf8" @utf8,
+  "moonbitlang/core/encoding/base64" @base64,
   "moonbitlang/core/json" @json,
+  "golemcloud/golem_sdk/config" @config,
 }
 
 options(

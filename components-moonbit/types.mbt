@@ -2,11 +2,11 @@
 /// Nigerian school class levels
 #derive.golem_schema
 pub(all) enum ClassLevel {
-  Primary1
-  Primary2
-  Primary3
-  Primary4
-  Primary5
+  Year1
+  Year2
+  Year3
+  Year4
+  Year5
   Jss1
   Jss2
   Jss3

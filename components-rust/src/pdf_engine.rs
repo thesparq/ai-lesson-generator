@@ -43,11 +43,11 @@ pub fn pdf_engine(
 
     // convert incoming class string to corresponding string typst requires
     let class_str = match class_year {
-        "PRIMARY_1" => "YEAR 1",
-        "PRIMARY_2" => "YEAR 2",
-        "PRIMARY_3" => "YEAR 3",
-        "PRIMARY_4" => "YEAR 4",
-        "PRIMARY_5" => "YEAR 5",
+        "YEAR_1" => "YEAR 1",
+        "YEAR_2" => "YEAR 2",
+        "YEAR_3" => "YEAR 3",
+        "YEAR_4" => "YEAR 4",
+        "YEAR_5" => "YEAR 5",
         "JSS_1" => "JSS 1",
         "JSS_2" => "JSS 2",
         "JSS_3" => "JSS 3",

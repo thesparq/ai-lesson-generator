@@ -328,6 +328,7 @@ dependencies = [
 name = "components_rust"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "derive_typst_intoval",
  "golem-rust",
  "log",
