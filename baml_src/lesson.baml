@@ -5,11 +5,11 @@
 // ============================================================================
 
 enum ClassLevel {
-  PRIMARY_1
-  PRIMARY_2
-  PRIMARY_3
-  PRIMARY_4
-  PRIMARY_5
+  YEAR_1
+  YEAR_2
+  YEAR_3
+  YEAR_4
+  YEAR_5
   JSS_1
   JSS_2
   JSS_3
@@ -142,19 +142,19 @@ function GenerateNigerianLesson(
     - Use Ogbomoso locations only when specific places needed
 
     2. Age-Appropriate Language for Content Section
-    {% if class_level == ClassLevel.PRIMARY_1 %}
+    {% if class_level == ClassLevel.YEAR_1 %}
     - Age 5-6: Very simple sentences, basic vocabulary, concrete familiar concepts only
     - Example: "A ball is round. We can throw a ball."
-    {% elif class_level == ClassLevel.PRIMARY_2 %}
+    {% elif class_level == ClassLevel.YEAR_2 %}
     - Age 6-7: Simple sentences, familiar examples, basic explanations
     - Example: "Plants need water to grow. We water plants every day."
-    {% elif class_level == ClassLevel.PRIMARY_3 %}
+    {% elif class_level == ClassLevel.YEAR_3 %}
     - Age 7-8: Short paragraphs, more detailed explanations, some abstract ideas
     - Example: "Living things need food, water and air. Plants make their own food using sunlight."
-    {% elif class_level == ClassLevel.PRIMARY_4 %}
+    {% elif class_level == ClassLevel.YEAR_4 %}
     - Age 8-9: Structured paragraphs, intermediate vocabulary, abstract concepts introduced
     - Example: "Photosynthesis is the process plants use to make food. Chlorophyll in leaves captures sunlight energy."
-    {% elif class_level == ClassLevel.PRIMARY_5 %}
+    {% elif class_level == ClassLevel.YEAR_5 %}
     - Age 9-10: Complex sentences, advanced vocabulary, abstract reasoning
     - Example: "Photosynthesis converts light energy into chemical energy stored in glucose molecules, releasing oxygen as a byproduct."
     {% elif class_level == ClassLevel.JSS_1 %}
@@ -169,7 +169,7 @@ function GenerateNigerianLesson(
     {% endif %}
 
     3. Word Count Limits (STRICT)
-    {% if class_level in [ClassLevel.PRIMARY_1, ClassLevel.PRIMARY_2, ClassLevel.PRIMARY_3] %}
+    {% if class_level in [ClassLevel.YEAR_1, ClassLevel.YEAR_2, ClassLevel.YEAR_3] %}
     - Main Content: 400-450 words MAX
     - Teacher Tips: 150-200 words
     {% else %}

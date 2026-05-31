@@ -7,7 +7,7 @@ fn str_to_bytes(s : String) -> FixedArray[Byte] {
 ///|
 /// Helper: bytes back to string
 fn bytes_to_str(bs : FixedArray[Byte]) -> String {
-  @utf8.decode_lossy(Bytes::from_fixedarray(bs).view())
+  @utf8.decode_lossy(Bytes::from_array(bs).view())
 }
 
 ///|
@@ -15,8 +15,8 @@ fn bytes_to_str(bs : FixedArray[Byte]) -> String {
 fn parse_db_url(url : String) -> (@wasiTypes.Scheme, String, String) {
   match url.split_once("://") {
     Some((scheme_view, rest_view)) => {
-      let scheme_str = scheme_view.to_string()
-      let rest = rest_view.to_string()
+      let scheme_str = scheme_view.to_owned()
+      let rest = rest_view.to_owned()
       let scheme = if scheme_str == "https" {
         @wasiTypes.Https
       } else {
@@ -24,7 +24,7 @@ fn parse_db_url(url : String) -> (@wasiTypes.Scheme, String, String) {
       }
       match rest.split_once("/") {
         Some((auth_view, path_view)) =>
-          (scheme, auth_view.to_string(), "/" + path_view.to_string())
+          (scheme, auth_view.to_owned(), "/" + path_view.to_owned())
         None => (scheme, rest, "/sql")
       }
     }
@@ -40,7 +40,7 @@ fn get_surrealdb_url() -> String {
     let (key, value) = env
     if key == "SURREAL_DB_URL" {
       let v = value
-      if v.ends_with("/sql") {
+      if v.has_suffix("/sql") {
         return v
       }
       return v + "/sql"
@@ -50,33 +50,39 @@ fn get_surrealdb_url() -> String {
 }
 
 ///|
-/// Send a SurrealQL query and return the response body string
-pub fn db_request(query : String) -> Result[String, AgentError] {
-  let url = get_surrealdb_url()
+/// Common HTTP request body, returns response body as string
+fn do_http_post(
+  url : String,
+  headers : @wasiTypes.Fields,
+  body_str : String,
+) -> Result[String, AgentError] {
   let (scheme, authority, path) = parse_db_url(url)
-  let headers = @wasiTypes.Fields::from_list([
-    ("Accept", str_to_bytes("application/json")),
-    (
-      "Authorization",
-      str_to_bytes(
-        "Basic Z29sZW06ejVFZFpoRmFIWmNpMjl4d2F6NFp1VUVtbWlkZ0g5S0FLem0wa0hSYUpBPQ==",
-      ),
-    ),
-  ]).unwrap()
-
   let request = @wasiTypes.OutgoingRequest::outgoing_request(headers)
   let _ = request.set_method(@wasiTypes.Post)
   let _ = request.set_scheme(Some(scheme))
   let _ = request.set_authority(Some(authority))
   let _ = request.set_path_with_query(Some(path))
-
-  let body = request.body().unwrap()
-  let output_stream = body.write().unwrap()
-  output_stream.blocking_write_and_flush(str_to_bytes(query)).unwrap()
+  let body = match request.body() {
+    Ok(b) => b
+    Err(_) => return Err({ message: "Failed to get request body", code: "HTTP_ERROR" })
+  }
+  let output_stream = match body.write() {
+    Ok(s) => s
+    Err(_) => return Err({ message: "Failed to open output stream", code: "HTTP_ERROR" })
+  }
+  match output_stream.blocking_write_and_flush(str_to_bytes(body_str)) {
+    Ok(_) => ()
+    Err(_) => return Err({ message: "Failed to write request body", code: "HTTP_ERROR" })
+  }
   output_stream.drop()
-  @wasiTypes.OutgoingBody::finish(body, None).unwrap()
-
-  let future_response = @http.handle(request, None).unwrap()
+  match @wasiTypes.OutgoingBody::finish(body, None) {
+    Ok(_) => ()
+    Err(_) => return Err({ message: "Failed to finish request body", code: "HTTP_ERROR" })
+  }
+  let future_response = match @http.handle(request, None) {
+    Ok(f) => f
+    Err(_) => return Err({ message: "HTTP handle failed", code: "HTTP_ERROR" })
+  }
   let pollable = future_response.subscribe()
   pollable.block()
   let response = match future_response.get() {
@@ -84,47 +90,111 @@ pub fn db_request(query : String) -> Result[String, AgentError] {
     _ => return Err({ message: "HTTP response error", code: "HTTP_ERROR" })
   }
   let status = response.status()
+  let incoming_body = match response.consume() {
+    Ok(b) => b
+    Err(_) => return Err({ message: "Failed to consume response body", code: "HTTP_ERROR" })
+  }
+  let stream = match incoming_body.stream() {
+    Ok(s) => s
+    Err(_) => return Err({ message: "Failed to open response stream", code: "HTTP_ERROR" })
+  }
+  let bytes = match stream.blocking_read(1048576UL) {
+    Ok(b) => b
+    Err(_) => return Err({ message: "Failed to read response body", code: "HTTP_ERROR" })
+  }
+  stream.drop()
+  let _ = @wasiTypes.IncomingBody::finish(incoming_body)
+  let body = bytes_to_str(bytes)
   if status != 200U {
-    let incoming = response.consume().unwrap()
-    let stream = incoming.stream().unwrap()
-    let errbytes = stream.blocking_read(1024UL).unwrap()
-    stream.drop()
-    let _ = @wasiTypes.IncomingBody::finish(incoming)
     return Err({
-      message: "HTTP " + status.to_string() + ": " + bytes_to_str(errbytes),
+      message: "HTTP " + status.to_string() + ": " + body,
       code: "HTTP_ERROR",
     })
   }
-  let incoming_body = response.consume().unwrap()
-  let stream = incoming_body.stream().unwrap()
-  let bytes = stream.blocking_read(1048576UL).unwrap()
-  stream.drop()
-  let _ = @wasiTypes.IncomingBody::finish(incoming_body)
+  Ok(body)
+}
 
-  Ok(bytes_to_str(bytes))
+///|
+/// Get SURREAL_DB_NAMESPACE from environment variables
+fn get_surrealdb_ns() -> String {
+  let envs = @cliEnv.get_environment()
+  for env in envs {
+    let (key, value) = env
+    if key == "SURREAL_DB_NS" { return value }
+  }
+  "main"
+}
+
+///|
+/// Get SURREAL_DB_NAME from environment variables
+fn get_surrealdb_name() -> String {
+  let envs = @cliEnv.get_environment()
+  for env in envs {
+    let (key, value) = env
+    if key == "SURREAL_DB" { return value }
+  }
+  "johnethel-school-generated-lessons"
+}
+
+///|
+/// Build Basic auth from env vars (no hardcoded fallback)
+fn build_auth_header() -> Result[(String, FixedArray[Byte]), AgentError] {
+  let envs = @cliEnv.get_environment()
+  let mut user : String? = None
+  let mut pass : String? = None
+  for env in envs {
+    let (key, value) = env
+    if key == "SURREAL_DB_USER" { user = Some(value) }
+    if key == "SURREAL_DB_PASSWORD" { pass = Some(value) }
+  }
+  match (user, pass) {
+    (Some(u), Some(p)) => {
+      let b64 = @base64.encode(@utf8.encode(u + ":" + p).view())
+      Ok(("Authorization", str_to_bytes("Basic " + b64)))
+    }
+    _ => Err({ message: "Missing SURREAL_DB_USER or SURREAL_DB_PASSWORD", code: "CONFIG_ERROR" })
+  }
+}
+
+///|
+/// Send a SurrealQL query with env-based auth and namespace
+pub fn db_request(query : String) -> Result[String, AgentError] {
+  let url = get_surrealdb_url()
+  let ns = get_surrealdb_ns()
+  let db = get_surrealdb_name()
+  let (auth_name, auth_val) = match build_auth_header() {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let headers = match @wasiTypes.Fields::from_list([
+    ("Accept", str_to_bytes("application/json")),
+    ("surreal-ns", str_to_bytes(ns)),
+    ("surreal-db", str_to_bytes(db)),
+    (auth_name, auth_val),
+  ]) {
+    Ok(h) => h
+    Err(_) => return Err({ message: "Failed to build request headers", code: "HTTP_ERROR" })
+  }
+  do_http_post(url, headers, query)
 }
 
 ///|
 /// Fetch topic records from a table
 pub fn fetch_topics(table : String) -> Result[Array[TopicRecord], AgentError] {
-  let query = "USE NS main DB `johnethel-school-generated-lessons`; SELECT * FROM " +
-    table +
-    ";"
+  let query = "SELECT * FROM " + table + " WHERE generated = false OR generated IS NONE;"
   let response = match db_request(query) {
     Ok(s) => s
     Err(e) => return Err(e)
   }
-  // Use Json parsing
   let json = @json.parse(response) catch { _ => return Ok([]) }
   let arr = match json {
     Json::Array(a) => a
     _ => return Ok([])
   }
-  // arr[0] = USE result, arr[1] = SELECT result
-  if arr.length() < 2 {
+  if arr.length() < 1 {
     return Ok([])
   }
-  let sel = match arr[1] {
+  let sel = match arr[0] {
     Json::Object(o) => o
     _ => return Ok([])
   }
@@ -132,7 +202,6 @@ pub fn fetch_topics(table : String) -> Result[Array[TopicRecord], AgentError] {
     Some(Json::Array(r)) => r
     _ => return Ok([])
   }
-  // Convert each Json to TopicRecord using functional style
   fn item_to_record(item : Json) -> TopicRecord? {
     match item {
       Object(o) => {
@@ -152,7 +221,7 @@ pub fn fetch_topics(table : String) -> Result[Array[TopicRecord], AgentError] {
           Some(String(s)) => s
           _ => ""
         }
-        let term = match o.get("term") {
+        let term_str = match o.get("term") {
           Some(String(s)) => s
           _ => ""
         }
@@ -169,7 +238,7 @@ pub fn fetch_topics(table : String) -> Result[Array[TopicRecord], AgentError] {
           agegroup,
           class: class_val,
           subject,
-          term,
+          term: term_str,
           topic,
           week,
           context: None,
@@ -182,28 +251,139 @@ pub fn fetch_topics(table : String) -> Result[Array[TopicRecord], AgentError] {
 }
 
 ///|
-/// Fetch generated lessons (stub)
-pub fn fetch_lessons(
-  subject : String,
-  class : String,
-) -> Result[Array[CompleteLessonContent], AgentError] {
-  let _subject = subject
-  let _class = class
-  Ok([])
+/// Validate a SurrealDB record ID (table:id — alphanumeric, underscore, colon, hyphen only)
+fn is_valid_record_id(id : String) -> Bool {
+  let mut i = 0
+  let mut saw_colon = false
+  while i < id.length() {
+    let c = id[i]
+    if c == ':' {
+      if saw_colon { return false }
+      saw_colon = true
+    } else if c == '_' || c == '-' {
+      // allowed non-alphanumeric
+    } else {
+      let n = c.to_int()
+      if n < 48 || (n > 57 && n < 65) || (n > 90 && n < 97) || n > 122 {
+        return false
+      }
+    }
+    i = i + 1
+  }
+  saw_colon && !id.starts_with(":") && !id.ends_with(":")
 }
 
 ///|
-/// Write a lesson to the database
-pub fn create_row(
+/// Fetch a single topic by id
+pub fn fetch_topic_by_id(
+  id : String,
+  _config : DbConfig,
+) -> Result[TopicRecord?, AgentError] {
+  if !is_valid_record_id(id) {
+    return Err({ message: "Invalid topic ID format", code: "VALIDATION_ERROR" })
+  }
+  let query = "SELECT * FROM " + id + " WHERE generated = false OR generated IS NONE LIMIT 1;"
+  let response = match db_request(query) {
+    Ok(s) => s
+    Err(e) => return Err(e)
+  }
+  let json = @json.parse(response) catch { _ => return Ok(None) }
+  let arr = match json {
+    Json::Array(a) => a
+    _ => return Ok(None)
+  }
+  if arr.length() < 1 {
+    return Ok(None)
+  }
+  let sel = match arr[0] {
+    Json::Object(o) => o
+    _ => return Ok(None)
+  }
+  let records = match sel.get("result") {
+    Some(Json::Array(r)) => r
+    _ => return Ok(None)
+  }
+  if records.length() == 0 {
+    return Ok(None)
+  }
+  let item = records[0]
+  match item {
+    Object(o) => {
+      let agegroup = match o.get("agegroup") {
+        Some(String(s)) => s
+        _ => ""
+      }
+      let class_str = match o.get("class") {
+        Some(String(s)) => s
+        _ => ""
+      }
+      let subject = match o.get("subject") {
+        Some(String(s)) => s
+        _ => ""
+      }
+      let term_s = match o.get("term") {
+        Some(String(s)) => s
+        _ => ""
+      }
+      let topic = match o.get("topic") {
+        Some(String(s)) => s
+        _ => ""
+      }
+      let week = match o.get("week") {
+        Some(Number(n, ..)) => n.to_int()
+        _ => 0
+      }
+      let ctx = match o.get("context") {
+        Some(String(s)) => Some(s)
+        _ => None
+      }
+      Ok(Some({
+        id: Some(id),
+        agegroup,
+        class: class_str,
+        subject,
+        term: term_s,
+        topic,
+        week,
+        context: ctx,
+      }))
+    }
+    _ => Ok(None)
+  }
+}
+
+///|
+/// JSON-escape a string value
+fn json_escape(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i]
+    if c == '\\' { result = result + "\\\\" }
+    else if c == '"' { result = result + "\\\"" }
+    else if c == '\n' { result = result + "\\n" }
+    else if c == '\r' { result = result + "\\r" }
+    else if c == '\t' { result = result + "\\t" }
+    else if c == '\b' { result = result + "\\b" }
+    else if c == '\x0C' { result = result + "\\f" }
+    else { result = result + c.to_string() }
+    i = i + 1
+  }
+  result
+}
+
+///|
+/// Build a SurrealDB-compatible JSON string for the lesson_content
+fn build_lesson_json(
   content : CompleteLessonContent,
   source_id : String,
-) -> Result[String, AgentError] {
+) -> String {
   let class_str = match content.class_level {
-    Primary1 => "PRIMARY_1"
-    Primary2 => "PRIMARY_2"
-    Primary3 => "PRIMARY_3"
-    Primary4 => "PRIMARY_4"
-    Primary5 => "PRIMARY_5"
+    Year1 => "YEAR_1"
+    Year2 => "YEAR_2"
+    Year3 => "YEAR_3"
+    Year4 => "YEAR_4"
+    Year5 => "YEAR_5"
     Jss1 => "JSS_1"
     Jss2 => "JSS_2"
     Jss3 => "JSS_3"
@@ -213,38 +393,133 @@ pub fn create_row(
     Second => "SECOND"
     Third => "THIRD"
   }
-  let json_str = "{" +
-    "\"topic_title\":\"" +
-    content.topic_title +
-    "\"" +
-    ",\"subject\":\"" +
-    content.subject +
-    "\"" +
-    ",\"class_level\":\"" +
-    class_str +
-    "\"" +
-    ",\"age_range\":\"" +
-    content.age_range +
-    "\"" +
-    ",\"term\":\"" +
-    term_str +
-    "\"" +
-    ",\"week\":" +
-    content.week.to_string() +
-    ",\"source_id\":\"" +
-    source_id +
-    "\"" +
-    ",\"duration_mins\":" +
-    content.duration_mins.to_string() +
+  let ps = "[" + content.primary_sources.map(fn(s) { "\"" + json_escape(s) + "\"" }).join(",") + "]"
+  "{" +
+    "\"topic_title\":\"" + json_escape(content.topic_title) + "\"" +
+    ",\"subject\":\"" + json_escape(content.subject) + "\"" +
+    ",\"class_level\":\"" + json_escape(class_str) + "\"" +
+    ",\"age_range\":\"" + json_escape(content.age_range) + "\"" +
+    ",\"term\":\"" + json_escape(term_str) + "\"" +
+    ",\"week\":" + content.week.to_string() +
+    ",\"duration_mins\":" + content.duration_mins.to_string() +
+    ",\"source_id\":\"" + json_escape(source_id) + "\"" +
+    ",\"primary_sources\":" + ps +
     "}"
-  let query = "USE NS main DB `johnethel-school-generated-lessons`; CREATE lesson_content CONTENT " +
-    json_str +
-    ";"
-  let _response = match db_request(query) {
-    Ok(s) => s
-    Err(e) => return Err(e)
+}
+
+///|
+/// Escape a string for use in a SurrealQL string literal
+fn sql_escape(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i]
+    if c == '\\' { result = result + "\\\\" }
+    else if c == '"' { result = result + "\\\"" }
+    else { result = result + c.to_string() }
+    i = i + 1
   }
-  Ok("Created: " + source_id)
+  result
+}
+
+///|
+/// Write a lesson to the database in an ACID transaction (config-based auth)
+pub fn create_row(
+  content : CompleteLessonContent,
+  source_id : String,
+  _config : DbConfig,
+) -> Result[String, AgentError] {
+  if !is_valid_record_id(source_id) {
+    return Err({ message: "Invalid source_id record ID", code: "VALIDATION_ERROR" })
+  }
+  let class_str = match content.class_level {
+    Year1 => "YEAR_1"
+    Year2 => "YEAR_2"
+    Year3 => "YEAR_3"
+    Year4 => "YEAR_4"
+    Year5 => "YEAR_5"
+    Jss1 => "JSS_1"
+    Jss2 => "JSS_2"
+    Jss3 => "JSS_3"
+  }
+  let terms = match content.term {
+    First => "FIRST"
+    Second => "SECOND"
+    Third => "THIRD"
+  }
+  let lesson_json = build_lesson_json(content, source_id)
+  let quoted_subject = "\"" + sql_escape(content.subject) + "\""
+  let quoted_class = "\"" + sql_escape(class_str) + "\""
+  let quoted_term = "\"" + sql_escape(terms) + "\""
+  let q_source = sql_escape(source_id)
+
+  let edge_create = "LET $hs = (SELECT VALUE id FROM has_subject WHERE in = " +
+    q_source + " AND out = (SELECT VALUE id FROM subjects WHERE name = " +
+    quoted_subject + " AND class_level = " + quoted_class +
+    " AND term = " + quoted_term + ") LIMIT 1);" +
+    "IF array::len($hs) == 0 {" +
+    "  (RELATE " + q_source + " -> has_subject -> (SELECT id FROM subjects WHERE name = " +
+    quoted_subject + " AND class_level = " + quoted_class +
+    " AND term = " + quoted_term + "));" +
+    "};"
+
+  let _ = match db_request(edge_create) {
+    Ok(_) => ()
+    Err(e) =>
+      @logging.warn("edge pre-create (best-effort): " + e.message)
+  }
+
+  let query = "BEGIN TRANSACTION;" +
+    "CREATE lesson_content CONTENT " + lesson_json + ";" +
+    "UPDATE " + q_source + " SET generated = true;" +
+    "COMMIT TRANSACTION;"
+  let response = match db_request(query) {
+    Ok(s) => s
+    Err(e) => {
+      @logging.error("create_row txn failed: " + e.message)
+      return Err(e)
+    }
+  }
+  let json = @json.parse(response) catch {
+    _ => return Ok("Created: " + source_id)
+  }
+  let arr = match json {
+    Json::Array(a) => a
+    _ => return Ok("Created: " + source_id)
+  }
+  for stmt_result in arr {
+    match stmt_result {
+      Object(o) => {
+        match o.get("status") {
+          Some(String(s)) =>
+            if s != "OK" {
+              let err_msg = match o.get("result") {
+                Some(String(e)) => e
+                _ => s
+              }
+              return Err({
+                message: "DB txn statement failed: " + err_msg,
+                code: "DB_ERROR",
+              })
+            }
+          _ => ()
+        }
+      }
+      _ => ()
+    }
+  }
+  Ok("Created lesson: " + content.topic_title)
+}
+
+///|
+/// Fetch generated lessons (stub)
+pub fn fetch_lessons(
+  subject : String,
+  class : String,
+) -> Result[Array[CompleteLessonContent], AgentError] {
+  let _subject = subject
+  let _class = class
+  Ok([])
 }
 
 ///|

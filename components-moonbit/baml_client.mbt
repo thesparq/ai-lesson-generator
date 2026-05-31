@@ -8,22 +8,22 @@ fn get_baml_base_url() -> String {
       return value
     }
   }
-  "http://localhost:8001"
+  "http://localhost:2024"
 }
 
 ///|
 /// Convert class string to BAML ClassLevel enum
 fn class_to_baml_level(class : String) -> ClassLevel {
   match class {
-    "Year 1" => ClassLevel::Primary1
-    "Year 2" => ClassLevel::Primary2
-    "Year 3" => ClassLevel::Primary3
-    "Year 4" => ClassLevel::Primary4
-    "Year 5" => ClassLevel::Primary5
+    "Year 1" => ClassLevel::Year1
+    "Year 2" => ClassLevel::Year2
+    "Year 3" => ClassLevel::Year3
+    "Year 4" => ClassLevel::Year4
+    "Year 5" => ClassLevel::Year5
     "Jss 1" => ClassLevel::Jss1
     "Jss 2" => ClassLevel::Jss2
     "Jss 3" => ClassLevel::Jss3
-    _ => ClassLevel::Primary1
+    _ => ClassLevel::Year1
   }
 }
 
@@ -58,11 +58,11 @@ pub fn convert_topic_to_request(
 /// Serialize a GenerateNigerianLessonRequest to a JSON string
 fn request_to_json(request : GenerateNigerianLessonRequest) -> String {
   let class_str = match request.class_level {
-    Primary1 => "PRIMARY_1"
-    Primary2 => "PRIMARY_2"
-    Primary3 => "PRIMARY_3"
-    Primary4 => "PRIMARY_4"
-    Primary5 => "PRIMARY_5"
+    Year1 => "YEAR_1"
+    Year2 => "YEAR_2"
+    Year3 => "YEAR_3"
+    Year4 => "YEAR_4"
+    Year5 => "YEAR_5"
     Jss1 => "JSS_1"
     Jss2 => "JSS_2"
     Jss3 => "JSS_3"
@@ -131,10 +131,18 @@ pub fn call_baml_generate_lesson(
   let (scheme, authority, path) = parse_url(base_url)
   let body_json = request_to_json(request)
 
-  let headers = @wasiTypes.Fields::from_list([
-    ("Content-Type", str_to_bytes("application/json")),
-    ("Accept", str_to_bytes("application/json")),
-  ]).unwrap()
+  let headers = match
+    @wasiTypes.Fields::from_list([
+      ("Content-Type", str_to_bytes("application/json")),
+      ("Accept", str_to_bytes("application/json")),
+    ]) {
+    Ok(h) => h
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to create headers",
+        code: "BAML_ERROR",
+      })
+  }
 
   let req = @wasiTypes.OutgoingRequest::outgoing_request(headers)
   let _ = req.set_method(@wasiTypes.Post)
@@ -142,24 +150,102 @@ pub fn call_baml_generate_lesson(
   let _ = req.set_authority(Some(authority))
   let _ = req.set_path_with_query(Some(path + "/call/GenerateNigerianLesson"))
 
-  let out_body = req.body().unwrap()
-  let output_stream = out_body.write().unwrap()
-  output_stream.blocking_write_and_flush(str_to_bytes(body_json)).unwrap()
+  let out_body = match req.body() {
+    Ok(b) => b
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to get request body",
+        code: "BAML_ERROR",
+      })
+  }
+  let output_stream = match out_body.write() {
+    Ok(s) => s
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to open output stream",
+        code: "BAML_ERROR",
+      })
+  }
+  match output_stream.blocking_write_and_flush(str_to_bytes(body_json)) {
+    Ok(_) => ()
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to write request body",
+        code: "BAML_ERROR",
+      })
+  }
   output_stream.drop()
-  @wasiTypes.OutgoingBody::finish(out_body, None).unwrap()
+  match @wasiTypes.OutgoingBody::finish(out_body, None) {
+    Ok(_) => ()
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to finish request body",
+        code: "BAML_ERROR",
+      })
+  }
 
-  let future_response = @http.handle(req, None).unwrap()
+  let future_response = match @http.handle(req, None) {
+    Ok(f) => f
+    Err(_) =>
+      return Err({
+        message: "BAML: HTTP handle failed (server unreachable?)",
+        code: "BAML_ERROR",
+      })
+  }
   let pollable = future_response.subscribe()
   pollable.block()
-  let response = future_response.get().unwrap().unwrap().unwrap()
-  let _status = response.status()
-  let incoming_body = response.consume().unwrap()
-  let stream = incoming_body.stream().unwrap()
-  let bytes = stream.blocking_read(1048576UL).unwrap()
+  let response = match future_response.get() {
+    Some(r) =>
+      match r {
+        Ok(rr) =>
+          match rr {
+            Ok(rrr) => rrr
+            Err(_) =>
+              return Err({
+                message: "BAML: HTTP response error",
+                code: "BAML_ERROR",
+              })
+          }
+        Err(_) =>
+          return Err({ message: "BAML: HTTP error", code: "BAML_ERROR" })
+      }
+    None => return Err({ message: "BAML: no response", code: "BAML_ERROR" })
+  }
+  let status = response.status()
+  let incoming_body = match response.consume() {
+    Ok(b) => b
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to consume response body",
+        code: "BAML_ERROR",
+      })
+  }
+  let stream = match incoming_body.stream() {
+    Ok(s) => s
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to open response stream",
+        code: "BAML_ERROR",
+      })
+  }
+  let bytes = match stream.blocking_read(1048576UL) {
+    Ok(b) => b
+    Err(_) =>
+      return Err({
+        message: "BAML: failed to read response",
+        code: "BAML_ERROR",
+      })
+  }
   stream.drop()
   let _ = @wasiTypes.IncomingBody::finish(incoming_body)
 
   let body_str = bytes_to_str(bytes)
+  if status != 200 {
+    return Err({
+      message: "BAML returned status " + status.to_string() + ": " + body_str,
+      code: "BAML_ERROR",
+    })
+  }
   parse_lesson_content_json(body_str)
 }
 
@@ -346,17 +432,17 @@ fn parse_lesson_content_json(
   let class_level_val = match obj.get("class_level") {
     Some(String(s)) =>
       match s {
-        "PRIMARY_1" => ClassLevel::Primary1
-        "PRIMARY_2" => ClassLevel::Primary2
-        "PRIMARY_3" => ClassLevel::Primary3
-        "PRIMARY_4" => ClassLevel::Primary4
-        "PRIMARY_5" => ClassLevel::Primary5
+        "YEAR_1" => ClassLevel::Year1
+        "YEAR_2" => ClassLevel::Year2
+        "YEAR_3" => ClassLevel::Year3
+        "YEAR_4" => ClassLevel::Year4
+        "YEAR_5" => ClassLevel::Year5
         "JSS_1" => ClassLevel::Jss1
         "JSS_2" => ClassLevel::Jss2
         "JSS_3" => ClassLevel::Jss3
-        _ => ClassLevel::Primary1
+        _ => ClassLevel::Year1
       }
-    _ => ClassLevel::Primary1
+    _ => ClassLevel::Year1
   }
   let term_val = match obj.get("term") {
     Some(String(s)) =>
@@ -481,15 +567,15 @@ fn fallback_parse(
   }
   let c = val(json_str, "class_level")
   let class_level = match c {
-    "PRIMARY_1" => ClassLevel::Primary1
-    "PRIMARY_2" => ClassLevel::Primary2
-    "PRIMARY_3" => ClassLevel::Primary3
-    "PRIMARY_4" => ClassLevel::Primary4
-    "PRIMARY_5" => ClassLevel::Primary5
+    "YEAR_1" => ClassLevel::Year1
+    "YEAR_2" => ClassLevel::Year2
+    "YEAR_3" => ClassLevel::Year3
+    "YEAR_4" => ClassLevel::Year4
+    "YEAR_5" => ClassLevel::Year5
     "JSS_1" => ClassLevel::Jss1
     "JSS_2" => ClassLevel::Jss2
     "JSS_3" => ClassLevel::Jss3
-    _ => ClassLevel::Primary1
+    _ => ClassLevel::Year1
   }
   let t = val(json_str, "term")
   let term = match t {

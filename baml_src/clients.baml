@@ -141,10 +141,19 @@
 //   }
 // }
 
+// client<llm> MainClient {
+//   provider openrouter
+//   options {
+//     model "anthropic/claude-haiku-4.5"
+//     api_key env.OPENROUTER_API_KEY
+//   }
+// }
+
 client<llm> MainClient {
-  provider openrouter
+  provider "openai-generic"
   options {
-    model "anthropic/claude-haiku-4.5"
-    api_key env.OPENROUTER_API_KEY
+    base_url "https://opencode.ai/zen/v1"
+    model "deepseek-v4-flash-free"
+    api_key env.OPENCODE_API_KEY
   }
 }

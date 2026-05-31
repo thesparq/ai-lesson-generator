@@ -7,66 +7,84 @@ fn sleep_ms(ms : UInt64) -> Unit {
 }
 
 ///|
-/// Find a topic by id in an array
-fn find_topic(topics : Array[TopicRecord], row_id : String) -> TopicRecord? {
-  for t in topics {
-    if t.id == Some(row_id) {
-      return Some(t)
-    }
-  }
-  None
+/// Helper: convert a string to Bytes for promise payloads
+fn string_to_bytes(s : String) -> Bytes {
+  @utf8.encode(s)
 }
 
 ///|
-/// Child content agent — processes one topic row
+/// Child content agent — processes one topic, completes a promise with the result
 #derive.agent
 struct ChildContentAgent {
   id : String
+  config : @config.Config[DbConfig]
 }
 
 ///|
-fn ChildContentAgent::new(id : String) -> ChildContentAgent {
-  { id, }
+fn ChildContentAgent::new(
+  id : String,
+  config : @config.Config[DbConfig],
+) -> ChildContentAgent {
+  { id, config }
 }
 
 ///|
-/// Generate content for a single topic row
+/// Generate content for this child's topic and complete the promise
 pub fn ChildContentAgent::generate(
   self : Self,
-  table : String,
-  row_id : String,
+  topic_id : String,
+  promise_key : PromiseKey,
 ) -> Unit {
-  // 1. Rate-limit delay
-  sleep_ms(4000)
+  let promise_id = to_promise_id(promise_key)
+  sleep_ms(500)
+  let config = self.config.value
 
-  // 2. Fetch topics from SurrealDB
-  let topics = match fetch_topics(table) {
-    Ok(t) => t
-    Err(_) => return
-  }
-  let topic = find_topic(topics, row_id)
-  let topic = match topic {
-    Some(t) => t
-    None => return
+  let topic = match fetch_topic_by_id(topic_id, config) {
+    Ok(Some(t)) => t
+    Ok(None) => {
+      let _ = @api.complete_promise(
+        promise_id,
+        string_to_bytes("skipped: not found or already generated"),
+      )
+      return
+    }
+    Err(e) => {
+      let _ = @api.complete_promise(
+        promise_id,
+        string_to_bytes("db error: " + e.message),
+      )
+      return
+    }
   }
 
-  // 3. Call BAML
   let request = convert_topic_to_request(topic)
   @logging.info("calling BAML for: " + topic.topic)
   let content = match call_baml_generate_lesson(request) {
     Ok(c) => c
     Err(e) => {
       @logging.error("BAML failed: " + e.message)
+      let _ = @api.complete_promise(
+        promise_id,
+        string_to_bytes("BAML error: " + e.message),
+      )
       return
     }
   }
   @logging.info("BAML OK: " + content.topic_title)
 
-  // 4. Write to DB
   @logging.info("writing to DB: " + content.topic_title)
-  let result = create_row(content, row_id)
+  let result = create_row(content, topic_id, config)
   match result {
-    Ok(msg) => @logging.info("DB OK: " + msg)
-    Err(e) => @logging.error("DB error: " + e.message)
+    Ok(msg) => {
+      let _ = @api.complete_promise(promise_id, string_to_bytes(msg))
+      @logging.info("DB OK: " + msg)
+    }
+    Err(e) => {
+      let _ = @api.complete_promise(
+        promise_id,
+        string_to_bytes("DB error: " + e.message),
+      )
+      @logging.error("DB error: " + e.message)
+    }
   }
 }

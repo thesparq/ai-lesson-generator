@@ -3,11 +3,11 @@
 ///|
 impl @schema.HasElementSchema for ClassLevel with element_schema() {
   @schema.make_enum_schema([
-    "Primary1",
-    "Primary2",
-    "Primary3",
-    "Primary4",
-    "Primary5",
+    "Year1",
+    "Year2",
+    "Year3",
+    "Year4",
+    "Year5",
     "Jss1",
     "Jss2",
     "Jss3",
@@ -18,11 +18,11 @@ impl @schema.HasElementSchema for ClassLevel with element_schema() {
 impl @schema.FromExtractor for ClassLevel with from_extractor(e) {
   let idx = @schema.extract_enum(e)
   match idx {
-    0 => Primary1
-    1 => Primary2
-    2 => Primary3
-    3 => Primary4
-    4 => Primary5
+    0 => Year1
+    1 => Year2
+    2 => Year3
+    3 => Year4
+    4 => Year5
     5 => Jss1
     6 => Jss2
     7 => Jss3
@@ -42,11 +42,11 @@ impl @schema.FromElementValue for ClassLevel with from_element_value(v) {
 ///|
 impl @schema.ToElementValue for ClassLevel with to_element_value(self) {
   match self {
-    Primary1 => @schema.make_enum_value(0U)
-    Primary2 => @schema.make_enum_value(1U)
-    Primary3 => @schema.make_enum_value(2U)
-    Primary4 => @schema.make_enum_value(3U)
-    Primary5 => @schema.make_enum_value(4U)
+    Year1 => @schema.make_enum_value(0U)
+    Year2 => @schema.make_enum_value(1U)
+    Year3 => @schema.make_enum_value(2U)
+    Year4 => @schema.make_enum_value(3U)
+    Year5 => @schema.make_enum_value(4U)
     Jss1 => @schema.make_enum_value(5U)
     Jss2 => @schema.make_enum_value(6U)
     Jss3 => @schema.make_enum_value(7U)
@@ -820,5 +820,132 @@ impl @schema.ToElementValue for AgentError with to_element_value(self) {
     @schema.to_element_value_as(self.message),
     @schema.to_element_value_as(self.code),
   ])
+}
+
+///|
+impl @schema.HasElementSchema for PromiseKey with element_schema() {
+  @schema.make_record_schema([
+    (
+      "component_id_high",
+      @schema.schema_of_tag((@schema.TypeTag::{  } : @schema.TypeTag[UInt64])),
+    ),
+    (
+      "component_id_low",
+      @schema.schema_of_tag((@schema.TypeTag::{  } : @schema.TypeTag[UInt64])),
+    ),
+    (
+      "agent_id",
+      @schema.schema_of_tag((@schema.TypeTag::{  } : @schema.TypeTag[String])),
+    ),
+    (
+      "oplog_idx",
+      @schema.schema_of_tag((@schema.TypeTag::{  } : @schema.TypeTag[UInt64])),
+    ),
+  ])
+}
+
+///|
+impl @schema.FromExtractor for PromiseKey with from_extractor(e) {
+  let component_id_high :UInt64 = @schema.extract_field(e, 0)
+  let component_id_low :UInt64 = @schema.extract_field(e, 1)
+  let agent_id :String = @schema.extract_field(e, 2)
+  let oplog_idx :UInt64 = @schema.extract_field(e, 3)
+  { component_id_high, component_id_low, agent_id, oplog_idx }
+}
+
+///|
+impl @schema.FromElementValue for PromiseKey with from_element_value(v) {
+  @schema.from_extractor_as(@extractor.extract_component_model_value(v))
+}
+
+///|
+impl @schema.ToElementValue for PromiseKey with to_element_value(self) {
+  @schema.make_record_value([
+    @schema.to_element_value_as(self.component_id_high),
+    @schema.to_element_value_as(self.component_id_low),
+    @schema.to_element_value_as(self.agent_id),
+    @schema.to_element_value_as(self.oplog_idx),
+  ])
+}
+
+///|
+impl @config.ConfigField for DbConfig with collect_entries(path) {
+  let entries :Array[@common.AgentConfigDeclaration] = []
+  let fp0 = path.copy()
+  fp0.push("host")
+  entries.append(
+    @config.collect_entries_of(
+      (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+      fp0,
+    ),
+  )
+  let fp1 = path.copy()
+  fp1.push("username")
+  entries.append(
+    @config.collect_entries_of(
+      (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+      fp1,
+    ),
+  )
+  let fp2 = path.copy()
+  fp2.push("password")
+  entries.append(
+    @config.collect_entries_of(
+      (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+      fp2,
+    ),
+  )
+  let fp3 = path.copy()
+  fp3.push("ns")
+  entries.append(
+    @config.collect_entries_of(
+      (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+      fp3,
+    ),
+  )
+  let fp4 = path.copy()
+  fp4.push("database")
+  entries.append(
+    @config.collect_entries_of(
+      (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+      fp4,
+    ),
+  )
+  entries
+}
+
+///|
+impl @config.ConfigField for DbConfig with load(path) {
+  let fp0 = path.copy()
+  fp0.push("host")
+  let host :@config.Secret[String] = @config.load_field(
+    (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+    fp0,
+  )
+  let fp1 = path.copy()
+  fp1.push("username")
+  let username :@config.Secret[String] = @config.load_field(
+    (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+    fp1,
+  )
+  let fp2 = path.copy()
+  fp2.push("password")
+  let password :@config.Secret[String] = @config.load_field(
+    (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+    fp2,
+  )
+  let fp3 = path.copy()
+  fp3.push("ns")
+  let ns :@config.Secret[String] = @config.load_field(
+    (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+    fp3,
+  )
+  let fp4 = path.copy()
+  fp4.push("database")
+  let database :@config.Secret[String] = @config.load_field(
+    (@schema.TypeTag::{  } : @schema.TypeTag[@config.Secret[String]]),
+    fp4,
+  )
+  { host, username, password, ns, database }
 }
 
